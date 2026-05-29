@@ -139,6 +139,7 @@ void apply_settings(animation_writer_t *const writer, const po::variables_map &v
     writer->set_show_turrets(vm.count("blitz") > 0);
     writer->set_show_orientation(vm.count("blitz") > 0);
     writer->set_skip(vm["skip"].as<double>());
+    writer->set_hide_dead(vm.count("hide-dead") > 0);
 
     if (vm.count("raw-images-path") > 0) {
         writer->set_raw_images_path(vm["raw-images-path"].as<std::string>());
@@ -475,6 +476,7 @@ int main(int argc, const char *argv[]) {
       ("map-size", po::value<int>()->default_value(500), "map size")
       ("max-history", po::value<int>()->default_value(100), "max history")
       ("raw-images-path", po::value<std::string>(), "raw images path")
+      ("hide-dead", "hide destroyed tanks from the gif")
 #ifdef ENABLE_TBB
       ("tokens", po::value(&tokens)->default_value(10), "number of pipeline tokens")
 #endif

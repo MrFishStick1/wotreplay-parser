@@ -8,6 +8,7 @@
 
 #include <deque>
 #include <gd.h>
+#include <set>
 
 namespace wotreplay {
 class animation_writer_t : public image_writer_t {
@@ -27,6 +28,7 @@ class animation_writer_t : public image_writer_t {
     void set_show_turrets(bool show_turrets);
     void set_show_orientation(bool show_orientation);
     void set_skip(double skip);
+    void set_hide_dead(bool hide_dead);
 
   private:
     gdIOCtx *ctx;
@@ -36,12 +38,14 @@ class animation_writer_t : public image_writer_t {
     std::map<int, std::deque<packet_t>> packets;
     std::map<int, int> current_health;
     std::map<int, int> max_health;
+    std::set<int> dead_players;
     std::vector<packet_t> hits;
     int frame_rate, model_update_rate;
     int max_history;
     std::string raw_images_path;
     bool show_turrets;
     bool show_orientation;
+    bool hide_dead;
     double skip;
 };
 } // namespace wotreplay

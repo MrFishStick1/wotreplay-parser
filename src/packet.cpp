@@ -4,6 +4,7 @@
 #include <boost/format.hpp>
 #include <cassert>
 #include <cstdint>
+#include <format>
 #include <numbers>
 #include <sstream>
 #include <stdexcept>

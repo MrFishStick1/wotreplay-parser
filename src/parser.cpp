@@ -12,6 +12,7 @@
 #include <boost/lexical_cast.hpp>
 #include <cstdint>
 #include <exception>
+#include <format>
 #include <map>
 #include <memory>
 #include <sstream>
@@ -158,16 +159,16 @@ void parser_t::parse(buffer_t &buffer, wotreplay::game_t &game, bool raw) {
                 .team = p.second,
             };
 
-            if (player_info.contains(p.first)) {
-                const auto &player_data = player_info[(uint32_t)p.first];
-                player.name = player_info[p.first].player_name();
-                if (player_data.team_id() != player.team) {
-                    logger.writef(log_level_t::warning, "player_id=%1% mismatch guessed_team_id=%2% != player_data_team_id=%3%\n", p.first, player.team,
-                                  player_data.team_id());
-                }
-            } else {
-                logger.writef(log_level_t::warning, "player_id=%1% in player data\n", p.first);
-                player.name = std::format("{}", p.first);
+            if (!player_info.contains(p.first)) {
+                logger.writef(log_level_t::warning, "skipping entity_id=%1% (no player_name packet, likely a turret)\n", p.first);
+                continue;
+            }
+
+            const auto &player_data = player_info[(uint32_t)p.first];
+            player.name = player_data.player_name();
+            if (player_data.team_id() != player.team) {
+                logger.writef(log_level_t::warning, "player_id=%1% mismatch guessed_team_id=%2% != player_data_team_id=%3%\n", p.first, player.team,
+                              player_data.team_id());
             }
 
             game.players[p.first] = player;

@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <format>
 #include <fstream>
 #include <numbers>
 #include <optional>
@@ -47,10 +48,19 @@ int animation_writer_t::update_model(const game_t &game, float window_start, flo
 
         if (packets[ix].has_property(property_t::health)) {
             current_health[packets[ix].player_id()] = packets[ix].health();
+            if (packets[ix].health() == 0) {
+                dead_players.insert(packets[ix].player_id());
+            }
         }
 
         if (packets[ix].has_property(property_t::max_health)) {
             max_health[packets[ix].player_id()] = packets[ix].max_health();
+        }
+
+        if (packets[ix].has_property(property_t::tank_destroyed)) {
+            auto [target, killer, kill_type] = packets[ix].tank_destroyed();
+            current_health[target] = 0;
+            dead_players.insert(target);
         }
 
         if (packets[ix].type() == 0x08 && packets[ix].sub_type() == 0x01) {
@@ -99,6 +109,8 @@ void animation_writer_t::set_max_history(int max_history) { this->max_history = 
 
 void animation_writer_t::set_show_orientation(bool show_orientation) { this->show_orientation = show_orientation; }
 
+void animation_writer_t::set_hide_dead(bool hide_dead) { this->hide_dead = hide_dead; }
+
 std::optional<packet_t> find_recent_position(const std::map<int, std::deque<packet_t>> &packets, int player_id, float clock) {
     if (!packets.contains(player_id)) {
         return std::nullopt;
@@ -138,6 +150,10 @@ gdImagePtr animation_writer_t::create_frame(const game_t &game, gdImagePtr backg
 
         int player_team = game.get_team_id(track.first);
         if (player_team == -1) {
+            continue;
+        }
+
+        if (hide_dead && dead_players.contains(track.first)) {
             continue;
         }
 
@@ -193,6 +209,7 @@ gdImagePtr animation_writer_t::create_frame(const game_t &game, gdImagePtr backg
 
         if (current_health.contains(track.first) && max_health.contains(track.first)) {
             float f = ((float)current_health.at(track.first)) / ((float)max_health.at(track.first));
+            f = std::clamp(f, 0.0f, 1.0f);
             gdImageFilledRectangle(frame, x - 42, y - 3, x - 12, y + 0, r);
 
             if (std::find_if(hits.begin(), hits.end(), [&](const packet_t &p) { return p.player_id() == track.first; }) != hits.end()) {
@@ -200,7 +217,7 @@ gdImagePtr animation_writer_t::create_frame(const game_t &game, gdImagePtr backg
             } else if (f > 0) {
                 gdImageFilledRectangle(frame, x - 42, y - 3, x - 42 + 30 * f, y + 0, g);
             }
-        } else {
+        } else if (player_team == recorder_team) {
             gdImageFilledRectangle(frame, x - 42, y - 3, x - 12, y + 0, w);
         }
 
