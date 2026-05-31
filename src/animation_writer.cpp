@@ -24,6 +24,16 @@ using namespace wotreplay;
 
 const int TURRET_LINE_LENGTH = 10;
 
+static int gd_warning_count = 0;
+static const char *gd_last_message = nullptr;
+static void capture_gd_error(int priority, const char *fmt, va_list ap) {
+    gd_warning_count += 1;
+    gd_last_message = fmt;
+    fprintf(stderr, "[gd p=%d] ", priority);
+    vfprintf(stderr, fmt, ap);
+    fflush(stderr);
+}
+
 int animation_writer_t::update_model(const game_t &game, float window_start, float window_size, int packet_start) {
     int ix = packet_start;
     const auto &packets = game.get_packets();
@@ -289,6 +299,8 @@ void animation_writer_t::set_show_turrets(bool show_turrets) { this->show_turret
 void animation_writer_t::set_skip(double skip) { this->skip = skip; }
 
 void animation_writer_t::update(const game_t &game) {
+    gdSetErrorMethod(capture_gd_error);
+
     draw_basemap();
 
     gdImagePtr previous = NULL, background = create_background_frame(game), frame = create_frame(game, background, 0.f);
@@ -333,8 +345,15 @@ void animation_writer_t::update(const game_t &game) {
             gdImagePngCtx(frame, (gdIOCtxPtr)&ctx);
         }
 
+        gd_warning_count = 0;
         gdImageTrueColorToPalette(frame, 1, 255);
+        int after_palette = gd_warning_count;
         gdImageGifAnimAddCtx(frame, ctx, 1, 0, 0, (int)(100 * df), gdDisposalNone, previous);
+        int after_add = gd_warning_count;
+        if (after_palette > 0 || after_add > after_palette) {
+            fprintf(stderr, ">>> frame %d: warnings during TrueColorToPalette=%d AnimAddCtx=%d\n",
+                    rendered_frame_nr, after_palette, after_add - after_palette);
+        }
 
         if (previous) {
             gdImageDestroy(previous);
