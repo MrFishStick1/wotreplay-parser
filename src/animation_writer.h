@@ -1,6 +1,6 @@
 #pragma once
 #include "packet.h"
-#include <flat_map>
+#include <boost/container/flat_map.hpp>
 #include <vector>
 #ifndef wotreplay_animation_writer_h
 #define wotreplay_animation_writer_h
@@ -33,10 +33,10 @@ class animation_writer_t : public image_writer_t {
 
   private:
     gdIOCtx *ctx;
-    std::flat_map<int, std::vector<packet_t>> turrets;
-    std::flat_map<int, std::vector<packet_t>> tracks;
-    std::flat_map<int, packet_t> current_health;
-    std::flat_map<int, packet_t> max_health;
+    boost::container::flat_map<int, std::vector<packet_t>> turrets;
+    boost::container::flat_map<int, std::vector<packet_t>> tracks;
+    boost::container::flat_map<int, packet_t> current_health;
+    boost::container::flat_map<int, packet_t> max_health;
     std::vector<packet_t> hits;
     int frame_rate, model_update_rate;
     int max_history;

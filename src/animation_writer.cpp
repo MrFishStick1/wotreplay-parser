@@ -29,7 +29,7 @@ const float HIT_VISIBILITY_TIMEOUT = 2.5;
 int animation_writer_t::update_model(const game_t &game, float window_start, float window_size, int packet_start) {
     int ix = packet_start;
     const auto &packets = game.get_packets();
-    std::flat_map<int, packet_t> turrets;
+    boost::container::flat_map<int, packet_t> turrets;
 
     float window_end = window_start + window_size;
 
@@ -91,7 +91,7 @@ void animation_writer_t::set_max_history(int max_history) { this->max_history = 
 void animation_writer_t::set_show_orientation(bool show_orientation) { this->show_orientation = show_orientation; }
 void animation_writer_t::set_use_player_health(bool use_player_health) { this->use_player_health = use_player_health; }
 
-std::optional<packet_t> find_recent_position(const std::flat_map<int, std::vector<packet_t>> &packets, int player_id, float clock) {
+std::optional<packet_t> find_recent_position(const boost::container::flat_map<int, std::vector<packet_t>> &packets, int player_id, float clock) {
     if (!packets.contains(player_id)) {
         return std::nullopt;
     }
@@ -230,11 +230,11 @@ gdImagePtr animation_writer_t::create_frame(const game_t &game, gdImagePtr backg
                 } else if (c == w) {
                     gdImageAlphaBlending(frame, gdEffectAlphaBlend);
                     gdImageSetAntiAliased(frame, int gdTrueColorAlpha(0xFF, 0xFF, 0xFF, 0x40));
-                    gdImageFilledArc(frame, player_x, player_y, TURRET_LINE_LENGTH * 2, TURRET_LINE_LENGTH * 2,
+                    gdImageFilledArc(frame, player_x, player_y, f * TURRET_LINE_LENGTH * 2, f * TURRET_LINE_LENGTH * 2,
                                      (t + r * std::numbers::pi / 2) * 180.f / std::numbers::pi - 30.f,
                                      (t + r * std::numbers::pi / 2) * 180.f / std::numbers::pi + 30.f, gdAntiAliased, gdArc);
                     gdImageSetAntiAliased(frame, int gdTrueColor(0xFF, 0xFF, 0xFF));
-                    gdImageFilledArc(frame, player_x, player_y, TURRET_LINE_LENGTH * 2, TURRET_LINE_LENGTH * 2,
+                    gdImageFilledArc(frame, player_x, player_y, f * TURRET_LINE_LENGTH * 2, f * TURRET_LINE_LENGTH * 2,
                                      (t + r * std::numbers::pi / 2) * 180.f / std::numbers::pi - 30.f,
                                      (t + r * std::numbers::pi / 2) * 180.f / std::numbers::pi + 30.f, gdAntiAliased, gdEdged | gdNoFill);
                     gdImageAlphaBlending(frame, gdEffectReplace);
@@ -252,12 +252,12 @@ gdImagePtr animation_writer_t::create_frame(const game_t &game, gdImagePtr backg
             } else {
                 gdImageSetAntiAliased(frame, c);
                 gdImageFilledArc(frame, player_x + f * TURRET_LINE_LENGTH / 4 * std::cos(o - std::numbers::pi / 2),
-                                 player_y + f * TURRET_LINE_LENGTH / 4 * std::sin(o - std::numbers::pi / 2), TURRET_LINE_LENGTH / 1.5, TURRET_LINE_LENGTH / 1.5,
+                                 player_y + f * TURRET_LINE_LENGTH / 4 * std::sin(o - std::numbers::pi / 2), f * TURRET_LINE_LENGTH / 1.5, f * TURRET_LINE_LENGTH / 1.5,
                                  (o - 3 * std::numbers::pi / 2) * 180.f / std::numbers::pi - 22.5f,
                                  (o - 3 * std::numbers::pi / 2) * 180.f / std::numbers::pi + 22.5f, gdAntiAliased, gdChord);
                 gdImageSetAntiAliased(frame, gdTrueColor(0x00, 0x00, 0x00));
                 gdImageFilledArc(frame, player_x + f * TURRET_LINE_LENGTH / 4 * std::cos(o - std::numbers::pi / 2),
-                                 player_y + f * TURRET_LINE_LENGTH / 4 * std::sin(o - std::numbers::pi / 2), TURRET_LINE_LENGTH / 1.5, TURRET_LINE_LENGTH / 1.5,
+                                 player_y + f * TURRET_LINE_LENGTH / 4 * std::sin(o - std::numbers::pi / 2), f * TURRET_LINE_LENGTH / 1.5, f * TURRET_LINE_LENGTH / 1.5,
                                  (o - 3 * std::numbers::pi / 2) * 180.f / std::numbers::pi - 22.5f,
                                  (o - 3 * std::numbers::pi / 2) * 180.f / std::numbers::pi + 22.5f, gdAntiAliased, gdEdged | gdNoFill);
             }

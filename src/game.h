@@ -6,7 +6,7 @@
 #include "types.h"
 
 #include <cstdint>
-#include <flat_map>
+#include <boost/container/flat_map.hpp>
 #include <set>
 #include <vector>
 
@@ -141,7 +141,7 @@ class game_t {
      */
     const player_t &get_player(int player_id) const;
     game_title_t get_game_title() const;
-    std::flat_map<int, player_t> players;
+    boost::container::flat_map<int, player_t> players;
 
   private:
     std::vector<packet_t> packets;

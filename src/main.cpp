@@ -264,7 +264,7 @@ int process_replay_directory(const po::variables_map &vm, const std::string &inp
         return nullptr;
     };
 
-    std::flat_map<std::tuple<std::string, std::string>, image_writer_t *> writers;
+    boost::container::flat_map<std::tuple<std::string, std::string>, image_writer_t *> writers;
 
     auto f_merge_image = [&writers](image_writer_t *writer_) {
         if (writer_ == nullptr)
@@ -287,7 +287,7 @@ int process_replay_directory(const po::variables_map &vm, const std::string &inp
                                        tbb::make_filter<game_t *, image_writer_t *>(tbb::filter::parallel, f_generate_image) &
                                        tbb::make_filter<image_writer_t *, void>(tbb::filter::serial_out_of_order, f_merge_image));
 
-    typedef std::flat_map<std::tuple<std::string, std::string>, image_writer_t *>::iterator::value_type item_t;
+    typedef boost::container::flat_map<std::tuple<std::string, std::string>, image_writer_t *>::iterator::value_type item_t;
     tbb::parallel_do(writers.begin(), writers.end(), [&output](const item_t &it) {
         path file_name = path(output) / (boost::format("%s_%s.png") % std::get<0>(it.first) % std::get<1>(it.first)).str();
         std::ofstream out(file_name.string(), std::ios::binary);
@@ -308,7 +308,7 @@ int process_replay_directory(const po::variables_map &vm, const std::string &inp
     parser_t parser(std::move(std::unique_ptr<packet_reader_t>(new packet_reader_80_t())), load_data_mode_t::bulk);
     parser.set_debug(debug);
 
-    std::flat_map<std::string, std::unique_ptr<writer_t>> writers;
+    boost::container::flat_map<std::string, std::unique_ptr<writer_t>> writers;
     for (auto it = directory_iterator(input); it != directory_iterator(); ++it) {
         if (!is_regular_file(*it) || it->path().extension() != ".wotreplay") {
             continue;
@@ -363,7 +363,7 @@ int process_replay_directory(const po::variables_map &vm, const std::string &inp
 #endif
 
 int process_replay_file(const po::variables_map &vm, const std::string &input, const std::string &output, const std::string &type, bool debug) {
-    static std::flat_map<std::string, std::string> suffixes = {{"png", ".png"},
+    static boost::container::flat_map<std::string, std::string> suffixes = {{"png", ".png"},
                                                                {"json", ".json"},
                                                                {"heatmap", "_heatmap.png"},
                                                                {"team-heatmap", "_team_heatmap.png"},

@@ -44,7 +44,7 @@ template <typename T> static void debug_stream_content(const std::string &file_n
 
 #endif
 
-static std::flat_map<game_title_t, std::array<unsigned char, 16>> encryption_keys = {
+static boost::container::flat_map<game_title_t, std::array<unsigned char, 16>> encryption_keys = {
     {game_title_t::world_of_tanks, {0xDE, 0x72, 0xBE, 0xA0, 0xDE, 0x04, 0xBE, 0xB1, 0xDE, 0xFE, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF}},
     {game_title_t::world_of_warships, {0x29, 0xB7, 0xC9, 0x09, 0x38, 0x3F, 0x84, 0x88, 0xFA, 0x98, 0xEC, 0x4E, 0x13, 0x19, 0x79, 0xFB}}};
 
@@ -125,8 +125,8 @@ void parser_t::parse(buffer_t &buffer, wotreplay::game_t &game, bool raw) {
     read_packets(game);
 
     if (raw) {
-        std::flat_map<int, int> groups;
-        std::flat_map<int, packet_t> player_info;
+        boost::container::flat_map<int, int> groups;
+        boost::container::flat_map<int, packet_t> player_info;
 
         for (const auto &p : game.packets) {
             if (p.has_property(property_t::recorder_id)) {
@@ -387,7 +387,7 @@ void parser_t::read_player_info(game_t &game) {
 }
 
 void wotreplay::show_packet_summary(const std::vector<packet_t> &packets) {
-    std::flat_map<char, int> packet_type_count;
+    boost::container::flat_map<char, int> packet_type_count;
 
     for (const packet_t &p : packets) {
         packet_type_count[p.type()]++;
