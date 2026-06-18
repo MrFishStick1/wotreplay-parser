@@ -141,6 +141,11 @@ void apply_settings(animation_writer_t *const writer, const po::variables_map &v
     writer->set_use_player_health(vm.count("blitz") > 0);
     writer->set_skip(vm["skip"].as<double>());
     writer->set_debug(vm.count("debug") > 0);
+    writer->set_real_time(vm.count("real-time") > 0);
+    const int interpolate_steps = vm["interpolate"].as<int>();
+    writer->set_interpolate(interpolate_steps > 0);
+    writer->set_interpolate_steps(interpolate_steps);
+    writer->set_ffmpeg_path(vm["ffmpeg"].as<std::string>());
 
     if (vm.count("raw-images-path") > 0) {
         writer->set_raw_images_path(vm["raw-images-path"].as<std::string>());
@@ -186,14 +191,18 @@ std::unique_ptr<writer_t> create_writer(const std::string &type, const po::varia
         apply_settings(dynamic_cast<class_heatmap_writer_t *>(writer.get()), vm);
         apply_settings(dynamic_cast<heatmap_writer_t *>(writer.get()), vm);
         apply_settings(dynamic_cast<image_writer_t *>(writer.get()), vm);
-    } else if (type == "gif") {
+    } else if (type == "gif" || type == "mp4") {
         writer.reset(new animation_writer_t());
 
         apply_settings(dynamic_cast<image_writer_t *>(writer.get()), vm);
         apply_settings(dynamic_cast<animation_writer_t *>(writer.get()), vm);
+
+        if (type == "mp4") {
+            dynamic_cast<animation_writer_t *>(writer.get())->set_mp4(true);
+        }
     } else {
         logger.writef(log_level_t::error,
-                      "Invalid output type (%1%), supported types: png, gif, "
+                      "Invalid output type (%1%), supported types: png, gif, mp4, "
                       "json, heatmap, "
                       "team-heatmap, team-heatmap-soft or class-heatmap.\n",
                       type);
@@ -368,7 +377,8 @@ int process_replay_file(const po::variables_map &vm, const std::string &input, c
                                                                {"heatmap", "_heatmap.png"},
                                                                {"team-heatmap", "_team_heatmap.png"},
                                                                {"team-heatmap-soft", "_team_heatmap_soft.png"},
-                                                               {"class-heatmap", "_class_heatmap.png"}};
+                                                               {"class-heatmap", "_class_heatmap.png"},
+                                                               {"mp4", ".mp4"}};
 
     if (!(vm.count("type") > 0 && vm.count("input") > 0)) {
         logger.write(wotreplay::log_level_t::error, "parameters type and input are required to use this mode\n");
@@ -412,15 +422,34 @@ int process_replay_file(const po::variables_map &vm, const std::string &input, c
             };
         }
 
+        std::string file_name;
+        if (vm.count("output") > 0) {
+            file_name = single ? output : output + suffixes[*it];
+        }
+
+        if (*it == "mp4") {
+            // mp4 is encoded straight to the output file by ffmpeg during update(),
+            // so the path must be known before rendering and there is no stream step.
+            if (file_name.empty()) {
+                logger.write(log_level_t::error, "mp4 output requires --output to be set\n");
+                return EX_USAGE;
+            }
+            dynamic_cast<animation_writer_t &>(*writer).set_output_path(file_name);
+        }
+
         writer->init(game.get_arena(), game.get_game_mode());
 
         writer->update(game);
         writer->finish();
 
+        if (*it == "mp4") {
+            // ffmpeg already wrote file_name; skip the ostream output path.
+            continue;
+        }
+
         std::ostream *out;
 
         if (vm.count("output") > 0) {
-            auto file_name = single ? output : output + suffixes[*it];
             out = new std::ofstream(file_name, std::ios::binary);
 
             if (!*out) {
@@ -472,6 +501,9 @@ int main(int argc, const char *argv[]) {
       ("overlay", "generate overlay, don't draw basemap in output image") 
       ("frame-rate", po::value<int>()->default_value(10), "set gif frame rate")
       ("model-update-rate", po::value<int>()->default_value(10), "set model update rate (accelerate game time)")
+      ("real-time", "advance the gif clock by a fixed step so playback matches real time (renders idle gaps instead of skipping them)")
+      ("interpolate", po::value<int>()->default_value(0), "smooth tank motion: number of interpolated steps to place between consecutive position packets (0 = off; higher is smoother, a very high value is effectively continuous)")
+      ("ffmpeg", po::value<std::string>()->default_value("ffmpeg"), "path to the ffmpeg executable used for mp4 output (default: ffmpeg, found via PATH)")
       ("version", "display version")
       ("blitz", "parse as world of tanks blitz")
       ("map-size", po::value<int>()->default_value(500), "map size")

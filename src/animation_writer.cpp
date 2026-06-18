@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <fstream>
 #include <numbers>
 #include <optional>
@@ -22,6 +23,16 @@
 #include <boost/filesystem.hpp>
 
 using namespace wotreplay;
+
+#ifdef _WIN32
+#define WOT_POPEN _popen
+#define WOT_PCLOSE _pclose
+#define WOT_POPEN_MODE "wb"
+#else
+#define WOT_POPEN popen
+#define WOT_PCLOSE pclose
+#define WOT_POPEN_MODE "w"
+#endif
 
 const int TURRET_LINE_LENGTH = 20;
 const float HIT_VISIBILITY_TIMEOUT = 2.5;
@@ -107,6 +118,74 @@ std::optional<packet_t> find_recent_position(const boost::container::flat_map<in
     return {*result};
 }
 
+// Returns the first sample after `clock`, or end() if there is none. `samples`
+// must be sorted ascending by clock(), which is how tracks/turrets accumulate.
+static std::vector<packet_t>::const_iterator upper_bound_by_clock(const std::vector<packet_t> &samples, float clock) {
+    return std::upper_bound(samples.begin(), samples.end(), clock, [](float c, const packet_t &p) { return c < p.clock(); });
+}
+
+// Quantize an interpolation fraction so motion shows `steps` evenly-spaced
+// intermediate points between the two surrounding packets (steps+1 equal segments,
+// snapping to k/(steps+1)). A larger steps value is smoother; a very large value is
+// effectively continuous. steps <= 0 leaves the fraction untouched.
+static float quantize_fraction(float t, int steps) {
+    if (steps > 0) {
+        const float segments = (float)(steps + 1);
+        t = std::round(t * segments) / segments;
+    }
+    return t;
+}
+
+// Linearly interpolate a player's position at exactly `clock`, between the two
+// surrounding position packets. This smooths motion so it tracks the video frame
+// rate instead of stepping at the (much lower) packet rate. `steps` controls how
+// many intermediate points are placed between packets.
+static std::tuple<float, float, float> interpolate_position(const std::vector<packet_t> &samples, float clock, int steps) {
+    auto hi = upper_bound_by_clock(samples, clock);
+    if (hi == samples.begin()) {
+        return hi->position();
+    }
+    if (hi == samples.end()) {
+        return samples.back().position();
+    }
+
+    const packet_t &lo = *(hi - 1);
+    const float span = hi->clock() - lo.clock();
+    const float t = quantize_fraction(span > 0.f ? (clock - lo.clock()) / span : 0.f, steps);
+
+    const auto [x0, y0, z0] = lo.position();
+    const auto [x1, y1, z1] = hi->position();
+    return {x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, z0 + (z1 - z0) * t};
+}
+
+// Interpolate an angle accessor (hull/turret orientation) at `clock`, taking the
+// shortest path around the circle so it never spins the wrong way across the seam.
+static float interpolate_angle(const std::vector<packet_t> &samples, float clock, float (packet_t::*getter)() const, int steps) {
+    auto hi = upper_bound_by_clock(samples, clock);
+    if (hi == samples.begin()) {
+        return ((*hi).*getter)();
+    }
+    if (hi == samples.end()) {
+        return (samples.back().*getter)();
+    }
+
+    const packet_t &lo = *(hi - 1);
+    const float span = hi->clock() - lo.clock();
+    const float t = quantize_fraction(span > 0.f ? (clock - lo.clock()) / span : 0.f, steps);
+
+    const float a0 = (lo.*getter)();
+    const float a1 = ((*hi).*getter)();
+    const float two_pi = 2.f * std::numbers::pi_v<float>;
+
+    float d = std::fmod(a1 - a0 + std::numbers::pi_v<float>, two_pi);
+    if (d < 0.f) {
+        d += two_pi;
+    }
+    d -= std::numbers::pi_v<float>;
+
+    return a0 + d * t;
+}
+
 gdImagePtr animation_writer_t::create_frame(const game_t &game, gdImagePtr background, float clock) const {
     gdImagePtr frame = gdImageCreateTrueColor(gdImageSX(background), gdImageSY(background));
 
@@ -148,7 +227,10 @@ gdImagePtr animation_writer_t::create_frame(const game_t &game, gdImagePtr backg
             c = r;
         }
 
-        auto [player_x, player_y] = get_2d_coord(positions.back().position(), this->arena.bounding_box, this->image_width, this->image_height);
+        const auto player_position = (interpolate && interp_positions.contains(player_id))
+                                         ? interpolate_position(interp_positions.at(player_id), clock, interpolate_steps)
+                                         : positions.back().position();
+        auto [player_x, player_y] = get_2d_coord(player_position, this->arena.bounding_box, this->image_width, this->image_height);
 
         bool is_visible = positions.back().clock() - clock > -5.f;
         bool is_alive = current_health.contains(player_id) && current_health.at(player_id).health() > 0;
@@ -214,7 +296,14 @@ gdImagePtr animation_writer_t::create_frame(const game_t &game, gdImagePtr backg
 
         // render turrets
         if ((!use_player_health || is_alive) && show_turrets && turrets.contains(player_id)) {
-            const auto t = turrets.at(player_id).back().turret_orientation() + tracks.at(player_id).back().hull_orientation();
+            const auto &turret_samples = turrets.at(player_id);
+            const auto turret_angle = (interpolate && interp_turrets.contains(player_id))
+                                          ? interpolate_angle(interp_turrets.at(player_id), clock, &packet_t::turret_orientation, interpolate_steps)
+                                          : turret_samples.back().turret_orientation();
+            const auto hull_angle = (interpolate && interp_positions.contains(player_id))
+                                        ? interpolate_angle(interp_positions.at(player_id), clock, &packet_t::hull_orientation, interpolate_steps)
+                                        : positions.back().hull_orientation();
+            const auto t = turret_angle + hull_angle;
 
             const std::array<std::tuple<float, int>, 4> turret_lines = {
                 std::make_tuple(0.0f, r),
@@ -244,7 +333,9 @@ gdImagePtr animation_writer_t::create_frame(const game_t &game, gdImagePtr backg
 
         // render tank
         if (show_orientation) {
-            const auto o = positions.back().hull_orientation();
+            const auto o = (interpolate && interp_positions.contains(player_id))
+                               ? interpolate_angle(interp_positions.at(player_id), clock, &packet_t::hull_orientation, interpolate_steps)
+                               : positions.back().hull_orientation();
 
             if (debug) {
                 gdImageLine(frame, player_x, player_y, player_x + f * TURRET_LINE_LENGTH * std::cos(o - std::numbers::pi / 2),
@@ -375,9 +466,28 @@ gdImagePtr animation_writer_t::create_frame(const game_t &game, gdImagePtr backg
 }
 
 void animation_writer_t::write(std::ostream &os) {
-    int size;
-    void *data = gdDPExtractData(ctx, &size);
-    os.write((const char *)data, size);
+    if (mp4_output) {
+        // ffmpeg already wrote the mp4 directly to output_path during update();
+        // there is nothing to stream to os.
+        return;
+    }
+
+    // The GIF has already been streamed to gif_file through ctx during update().
+    // Release the GD context (this does not close the FILE), then flush, rewind
+    // and copy the file contents to the output stream.
+    if (ctx != nullptr) {
+        ctx->gd_free(ctx);
+        ctx = nullptr;
+    }
+
+    std::fflush(gif_file);
+    std::rewind(gif_file);
+
+    char buffer[64 * 1024];
+    size_t n;
+    while ((n = std::fread(buffer, 1, sizeof(buffer), gif_file)) > 0) {
+        os.write(buffer, n);
+    }
     os.flush();
 }
 
@@ -391,14 +501,67 @@ void animation_writer_t::set_skip(double skip) { this->skip = skip; }
 
 void animation_writer_t::set_debug(bool debug) { this->debug = debug; }
 
+void animation_writer_t::set_real_time(bool real_time) { this->real_time = real_time; }
+
+void animation_writer_t::set_interpolate(bool interpolate) { this->interpolate = interpolate; }
+
+void animation_writer_t::set_interpolate_steps(int interpolate_steps) { this->interpolate_steps = interpolate_steps; }
+
+void animation_writer_t::set_mp4(bool mp4) { this->mp4_output = mp4; }
+
+void animation_writer_t::set_output_path(const std::string &output_path) { this->output_path = output_path; }
+
+void animation_writer_t::set_ffmpeg_path(const std::string &ffmpeg_path) { this->ffmpeg_path = ffmpeg_path; }
+
 void animation_writer_t::update(const game_t &game) {
     draw_basemap();
+
+    if (interpolate) {
+        // Build complete per-player position/turret timelines so motion can be
+        // interpolated toward future samples. (tracks/turrets only reach the
+        // current frame, which is too late to interpolate against.)
+        for (const auto &p : game.get_packets()) {
+            if (p.has_property(property_t::position)) {
+                interp_positions[p.player_id()].emplace_back(p);
+            }
+            if (p.has_property(property_t::turret_orientation)) {
+                interp_turrets[p.player_id()].emplace_back(p);
+            }
+        }
+    }
 
     gdImagePtr previous = NULL, background = create_background_frame(game), frame = create_frame(game, background, 0.f);
 
     float window_start = 0.f;
 
-    gdImageGifAnimBeginCtx(background, ctx, 1, 0);
+    if (mp4_output) {
+        // Stream frames straight into ffmpeg so no large intermediate file (gif
+        // or png sequence) is ever produced; ffmpeg writes the final mp4 itself.
+        // The pad filter rounds odd dimensions up to even, which yuv420p/x264 require.
+        // ffmpeg_path is quoted so a full path containing spaces works; launching
+        // ffmpeg by full path also lets Windows find its sibling DLLs (shared builds).
+        // Force the mp4 muxer (-f mp4) so the container is always mp4 regardless of
+        // the output filename's extension -- otherwise ffmpeg infers the muxer from
+        // the extension and e.g. a ".gif" output name makes it reject the h264 stream.
+        const auto inner = std::format("\"{}\" -y -f image2pipe -vcodec bmp -framerate {} -i - -c:v libx264 -crf 22 -pix_fmt yuv420p "
+                                       "-vf \"pad=ceil(iw/2)*2:ceil(ih/2)*2\" -f mp4 \"{}\"",
+                                       ffmpeg_path, frame_rate, output_path);
+#ifdef _WIN32
+        // _popen runs this through `cmd.exe /c`; when the command starts with a quote,
+        // cmd strips the first and last quote, which would break a quoted path with
+        // spaces. Wrapping the whole command in an extra outer pair makes cmd strip
+        // that pair instead, leaving the inner quotes intact.
+        const auto cmd = "\"" + inner + "\"";
+#else
+        const auto cmd = inner;
+#endif
+        ffmpeg_pipe = WOT_POPEN(cmd.c_str(), WOT_POPEN_MODE);
+        if (ffmpeg_pipe == nullptr) {
+            throw std::runtime_error("unable to launch ffmpeg for mp4 output (is ffmpeg on PATH?)");
+        }
+    } else {
+        gdImageGifAnimBeginCtx(background, ctx, 1, 0);
+    }
 
     const auto &packets = game.get_packets();
 
@@ -415,8 +578,20 @@ void animation_writer_t::update(const game_t &game) {
         frame_nr += 1;
 
         for (float ds = 0; ds < df && ix < total_packets; ds += dm) {
-            window_start = packets[ix].clock();
-            ix = this->update_model(game, window_start, dm, ix);
+            if (real_time) {
+                // Advance the clock by exactly dm so each frame represents a
+                // fixed slice of in-game time. This plays back at true real time
+                // (for model-update-rate 1) but renders idle gaps instead of
+                // skipping them.
+                ix = this->update_model(game, window_start, dm, ix);
+                window_start += dm;
+            } else {
+                // Snap to the next packet's timestamp. Skips idle gaps, but
+                // overshoots dm slightly each frame, so playback runs a touch
+                // faster than real time.
+                window_start = packets[ix].clock();
+                ix = this->update_model(game, window_start, dm, ix);
+            }
         }
 
         if (window_start < skip) {
@@ -436,23 +611,45 @@ void animation_writer_t::update(const game_t &game) {
             gdImagePngCtx(frame, (gdIOCtxPtr)&ctx);
         }
 
-        gdImageTrueColorToPalette(frame, 1, 255);
-        gdImageGifAnimAddCtx(frame, ctx, 1, 0, 0, (int)(df * 100), gdDisposalNone, previous);
+        if (mp4_output) {
+            // Hand the frame to ffmpeg as an uncompressed BMP, then free it right
+            // away. BMP avoids the zlib compress (here) and decompress (in ffmpeg)
+            // that PNG would cost on both ends of the pipe -- that compression was
+            // the dominant per-frame cost and the reason the pipe lagged. Each
+            // frame is still "used and discarded" so nothing piles up.
+            int bmp_size = 0;
+            void *bmp_data = gdImageBmpPtr(frame, &bmp_size, 0);
+            if (bmp_data != nullptr) {
+                std::fwrite(bmp_data, 1, bmp_size, ffmpeg_pipe);
+                gdFree(bmp_data);
+            }
+            gdImageDestroy(frame);
+            frame = nullptr;
+        } else {
+            gdImageTrueColorToPalette(frame, 1, 255);
+            gdImageGifAnimAddCtx(frame, ctx, 1, 0, 0, (int)(df * 100), gdDisposalNone, previous);
 
-        if (previous) {
-            gdImageDestroy(previous);
+            if (previous) {
+                gdImageDestroy(previous);
+            }
+
+            previous = frame;
         }
-
-        previous = frame;
     }
 
-    if (frame) {
-        gdImageDestroy(frame);
+    if (mp4_output) {
+        if (ffmpeg_pipe != nullptr) {
+            WOT_PCLOSE(ffmpeg_pipe);
+            ffmpeg_pipe = nullptr;
+        }
+    } else {
+        if (frame) {
+            gdImageDestroy(frame);
+        }
+        gdImageGifAnimEndCtx(ctx);
     }
 
     gdImageDestroy(background);
-
-    gdImageGifAnimEndCtx(ctx);
 }
 
 void animation_writer_t::set_raw_images_path(const std::string &raw_images_path) { this->raw_images_path = raw_images_path; }
@@ -460,7 +657,18 @@ void animation_writer_t::set_raw_images_path(const std::string &raw_images_path)
 void animation_writer_t::init(const arena_t &arena, const std::string &mode) {
     image_writer_t::init(arena, mode);
 
-    ctx = gdNewDynamicCtx(100 * 1024 * 1024, NULL);
+    if (!mp4_output) {
+        // Stream the GIF to a temporary file rather than an in-memory buffer. Large
+        // animations can exceed any fixed buffer size and overflow, so we let the GD
+        // context write straight to disk and copy the file out in write(). The mp4
+        // path pipes frames to ffmpeg instead and needs no GD context at all.
+        gif_file_path = (boost::filesystem::temp_directory_path() / boost::filesystem::unique_path("wotreplay-%%%%-%%%%-%%%%-%%%%.gif")).string();
+        gif_file = std::fopen(gif_file_path.c_str(), "wb+");
+        if (gif_file == nullptr) {
+            throw std::runtime_error("unable to open temporary file for animation output: " + gif_file_path);
+        }
+        ctx = gdNewFileCtx(gif_file);
+    }
 
     if (!raw_images_path.empty() && !boost::filesystem::exists(raw_images_path)) {
         logger.writef(log_level_t::info, "create raw images directory: %1%\n", raw_images_path);
@@ -470,4 +678,24 @@ void animation_writer_t::init(const arena_t &arena, const std::string &mode) {
 
 void animation_writer_t::finish() {}
 
-animation_writer_t::~animation_writer_t() { ctx->gd_free(ctx); }
+animation_writer_t::~animation_writer_t() {
+    if (ffmpeg_pipe != nullptr) {
+        WOT_PCLOSE(ffmpeg_pipe);
+        ffmpeg_pipe = nullptr;
+    }
+
+    if (ctx != nullptr) {
+        ctx->gd_free(ctx);
+        ctx = nullptr;
+    }
+
+    if (gif_file != nullptr) {
+        std::fclose(gif_file);
+        gif_file = nullptr;
+    }
+
+    if (!gif_file_path.empty()) {
+        boost::system::error_code ec;
+        boost::filesystem::remove(gif_file_path, ec);
+    }
+}
